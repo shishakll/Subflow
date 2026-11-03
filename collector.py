@@ -51,8 +51,31 @@ def extract_video_id(url_or_id: str) -> Optional[str]:
             if len(parts) >= 2 and len(parts[1]) == 11:
                 return parts[1]
 
+    bracket_match = re.search(r"\[([a-zA-Z0-9_-]{11})\]", s)
+    if bracket_match:
+        return bracket_match.group(1)
+
     match = YOUTUBE_ID_PATTERN.search(s)
     return match.group(1) if match else None
+
+
+def fetch_video_title_oembed(video_id: str) -> str:
+    """Fetches the official YouTube video title via lightweight oEmbed API (0 quota, no bot block)."""
+    import urllib.request
+    import json
+
+    oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json"
+    try:
+        req = urllib.request.Request(oembed_url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+                title = (data.get("title") or "").strip()
+                if title:
+                    return title
+    except Exception:
+        pass
+    return f"Video_{video_id}"
 
 
 def resolve_video_ids_from_target(target: str) -> List[Tuple[str, str]]:
@@ -79,7 +102,7 @@ def resolve_video_ids_from_target(target: str) -> List[Tuple[str, str]]:
     is_playlist_or_channel = any(kw in target for kw in ["playlist?list=", "/@", "/channel/", "/c/"])
 
     if single_id and not is_playlist_or_channel:
-        return [(single_id, f"Video_{single_id}")]
+        return [(single_id, fetch_video_title_oembed(single_id))]
 
     # Fallback to yt-dlp --flat-playlist extraction for playlists / channels
     print(f"[탐색] 재생목록/채널 메타데이터 스캔 중: {target}")

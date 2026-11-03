@@ -79,13 +79,16 @@ SYSTEM_PROMPT = """당신은 학술 및 기술 인터뷰를 체계적으로 문�
 
 === 중요 ===
 위 5개 헤더(### 1. ~ ### 5.)는 **반드시 그대로 출력**하십시오.
-각 섹션에 최소 3줄 이상 내용을 채우십시오.
-타임스탬프 인용([MM:SS] 형식)은 본문 곳곳에 최소 5회 이상 포함하십시오."""
+각 섹션에 최소 3줄 이상 구체적인 내용과 수치를 채우십시오.
+타임스탬프 인용([MM:SS] 형식)은 본문 곳곳에 최소 5회 이상 포함하십시오.
+마지막 5번 섹션의 끝 문장까지 절대 중간에 끊기지 않도록 완결된 문장으로 마무리하십시오."""
 
 MAX_RETRIES = 5
+MAX_OUTPUT_TOKENS = 8192
 SAFE_CHAR_LIMIT = 400_000  # 약 100K~120K 토큰 안전 상한 (하위 Fallback 모델 컨텍스트 보호)
 REQUIRED_HEADERS = ("### 1.", "### 2.", "### 3.", "### 4.", "### 5.")
 CITATION_PATTERN = re.compile(r"\[\d{1,3}:\d{2}(?::\d{2})?\]")
+TRUNCATED_END_CHARS = ("·", ",", ":", ";", "-", "*", "(", "[", "/")
 
 # ── 3. SQLite 상태 큐 ─────────────────────────────────────────────────────────
 def init_db() -> sqlite3.Connection:
@@ -203,10 +206,13 @@ def clean_transcript(file_path: Path, video_id: str) -> str:
         full_cleaned = full_cleaned[:SAFE_CHAR_LIMIT]
     return full_cleaned
 
-def validate_markdown_output(content: str) -> None:
+def validate_markdown_output(content: str, finish_reason: str | None = None) -> None:
     """
-    생성된 마크다운 리포트의 최소 길이, 필수 5단 섹션 헤더, 타임스탬프 인용 여부를 검증합니다.
+    생성된 마크다운 리포트의 최소 길이, 필수 5단 섹션 헤더, 타임스탬프 인용 여부 및 문장 완결성을 검증합니다.
     """
+    if finish_reason == "length":
+        raise ValueError("출력 토큰 상한 도달로 인해 리포트가 중간에 절단되었습니다 (finish_reason=length).")
+
     text = (content or "").strip()
     if len(text) < 150:
         raise ValueError(f"생성된 노트가 너무 짧습니다 ({len(text)}자 < 150자).")
@@ -217,6 +223,16 @@ def validate_markdown_output(content: str) -> None:
 
     if not CITATION_PATTERN.search(text):
         raise ValueError("본문 내 타임스탬프 인용([MM:SS])이 최소 1회 이상 포함되어야 합니다.")
+
+    # 마지막 5번 섹션 이후 최소 분량 및 문장 절단 여부 검증
+    sec5_idx = text.rfind("### 5.")
+    sec5_body = text[sec5_idx:].splitlines()[1:]
+    non_empty_sec5 = [line.strip() for line in sec5_body if line.strip()]
+    if len(non_empty_sec5) < 2:
+        raise ValueError("5번 섹션(현업 적용/실천 가이드) 본문이 부족하거나 누락되었습니다.")
+
+    if text.endswith(TRUNCATED_END_CHARS):
+        raise ValueError(f"리포트 마지막 문장이 비정상적으로 절단되었습니다 (끝 문자: '{text[-1]}').")
 
 def resolve_output_path(f_name: str, f_hash: str) -> Path:
     """
@@ -249,11 +265,13 @@ def process_single_job(client: OpenAI, slot_model: str, job: tuple) -> bool:
                 {"role": "user", "content": cleaned_text}
             ],
             temperature=0.15,
+            max_tokens=MAX_OUTPUT_TOKENS,
             timeout=300.0
         )
 
-        content = resp.choices[0].message.content
-        validate_markdown_output(content)
+        choice = resp.choices[0]
+        content = choice.message.content
+        validate_markdown_output(content, finish_reason=choice.finish_reason)
 
         out_file.write_text(content, encoding="utf-8")
 
