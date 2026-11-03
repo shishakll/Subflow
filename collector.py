@@ -332,6 +332,10 @@ def run_collector(
     delay_max: float = 5.0,
     force: bool = False,
     run_pipeline_after: bool = False,
+    domain: str = "medical",
+    sub_domain: str = "general",
+    channel: str = "",
+    index_after: bool = False,
 ) -> None:
     """Batch collector orchestrating target resolution, rate-limit jitter, and pipeline trigger."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -377,11 +381,33 @@ def run_collector(
     print(f"🏁 수집 완료! 성공: {success_count}개 | 실패: {fail_count}개 (총 {total}개)")
     print("============================================================")
 
-    # 3. Optional automatic execution of pipeline.py
+    # 3. Optional automatic execution of pipeline.py or indexer.py
     if run_pipeline_after:
         print("\n[자동 실행] 수집된 자막의 LLM 구조화 파이프라인(pipeline.py) 기동...")
         from pipeline import run_pipeline
-        run_pipeline(concurrency=2)
+        run_pipeline(
+            concurrency=2,
+            domain=domain,
+            sub_domain=sub_domain,
+            channel=channel,
+            index_after=index_after,
+        )
+    elif index_after:
+        print("\n[자동 실행] 수집된 자막의 OmniLake 레이크하우스 직접 인덱싱 기동...")
+        from indexer import OmniLakeIndexer
+        lake_indexer = OmniLakeIndexer()
+        for vid, vtitle in all_videos:
+            vtt_candidates = list(output_dir.glob(f"*{vid}*.vtt"))
+            if vtt_candidates:
+                lake_indexer.index_video(
+                    video_id=vid,
+                    title=vtitle,
+                    channel=channel or "Unknown Channel",
+                    domain=domain,
+                    sub_domain=sub_domain,
+                    vtt_path=vtt_candidates[0],
+                    mode="fast"
+                )
 
 
 # ── 6. CLI Entrypoint ────────────────────────────────────────────────────────
@@ -411,6 +437,10 @@ def main() -> None:
     parser.add_argument("--delay-max", type=float, default=5.0, help="요청 간 최대 랜덤 지터(초) (기본값: 5.0)")
     parser.add_argument("--force", action="store_true", help="이미 수집된 파일도 덮어쓰고 재수집")
     parser.add_argument("--run-pipeline", action="store_true", help="수집 완료 후 즉시 pipeline.py 배치 파이프라인 자동 실행")
+    parser.add_argument("--domain", "-d", default="medical", choices=["medical"], help="지식 도메인 (기본값: medical / MitoLake)")
+    parser.add_argument("--sub-domain", "-s", default="mitochondria", help="세부 도메인 (예: mitochondria, anti_aging, brain_health, skin_aging)")
+    parser.add_argument("--channel", "-c", default="", help="유튜브 채널명 (메타데이터 및 권위도 산정용)")
+    parser.add_argument("--index", action="store_true", help="수집/구조화 후 OmniLake LanceDB 인덱싱 자동 실행")
 
     args = parser.parse_args()
 
@@ -430,6 +460,10 @@ def main() -> None:
         delay_max=args.delay_max,
         force=args.force,
         run_pipeline_after=args.run_pipeline,
+        domain=args.domain,
+        sub_domain=args.sub_domain,
+        channel=args.channel,
+        index_after=args.index,
     )
 
 
