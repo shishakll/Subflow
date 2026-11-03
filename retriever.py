@@ -360,8 +360,8 @@ class OmniLakeRetriever:
 def main():
     parser = argparse.ArgumentParser(description="Subflow OmniLake Hybrid Retriever & Reasoner CLI")
     parser.add_argument("query", type=str, help="Question to ask OmniLake (KR or EN)")
-    parser.add_argument("--domain", type=str, default=None, choices=["medical", "seo", "fermentation"], help="Target domain filter")
-    parser.add_argument("--sub-domain", type=str, default=None, help="Specific sub-domain filter")
+    parser.add_argument("--domain", type=str, default="medical", choices=["medical"], help="Target domain (default: medical / MitoLake)")
+    parser.add_argument("--sub-domain", type=str, default=None, help="Specific sub-domain filter (e.g., mitochondria, anti_aging, brain_health, skin_aging)")
     parser.add_argument("--top-k", type=int, default=5, help="Number of evidence chunks to retrieve")
     parser.add_argument("--search-only", action="store_true", help="Print retrieved chunks only without LLM synthesis")
 

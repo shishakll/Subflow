@@ -679,8 +679,8 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Subflow Structuring Pipeline & OmniLake Indexer")
     parser.add_argument("--concurrency", "-c", type=int, default=2, help="동시 LLM 워커 수 (기본값: 2)")
-    parser.add_argument("--domain", "-d", type=str, default="medical", choices=["medical", "seo", "fermentation"], help="대상 지식 도메인")
-    parser.add_argument("--sub-domain", "-s", type=str, default="general", help="세부 도메인 (예: mitochondria, brain_health)")
+    parser.add_argument("--domain", "-d", type=str, default="medical", choices=["medical"], help="대상 지식 도메인 (기본값: medical / MitoLake)")
+    parser.add_argument("--sub-domain", "-s", type=str, default="mitochondria", help="세부 도메인 (예: mitochondria, anti_aging, brain_health, skin_aging)")
     parser.add_argument("--channel", type=str, default="", help="유튜브 채널명")
     parser.add_argument("--index", action="store_true", help="구조화 완료 후 OmniLake LanceDB 인덱싱까지 자동 실행")
 

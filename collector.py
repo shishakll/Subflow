@@ -437,8 +437,8 @@ def main() -> None:
     parser.add_argument("--delay-max", type=float, default=5.0, help="요청 간 최대 랜덤 지터(초) (기본값: 5.0)")
     parser.add_argument("--force", action="store_true", help="이미 수집된 파일도 덮어쓰고 재수집")
     parser.add_argument("--run-pipeline", action="store_true", help="수집 완료 후 즉시 pipeline.py 배치 파이프라인 자동 실행")
-    parser.add_argument("--domain", "-d", default="medical", choices=["medical", "seo", "fermentation"], help="지식 도메인 (기본값: medical)")
-    parser.add_argument("--sub-domain", "-s", default="general", help="세부 도메인 (기본값: general)")
+    parser.add_argument("--domain", "-d", default="medical", choices=["medical"], help="지식 도메인 (기본값: medical / MitoLake)")
+    parser.add_argument("--sub-domain", "-s", default="mitochondria", help="세부 도메인 (예: mitochondria, anti_aging, brain_health, skin_aging)")
     parser.add_argument("--channel", "-c", default="", help="유튜브 채널명 (메타데이터 및 권위도 산정용)")
     parser.add_argument("--index", action="store_true", help="수집/구조화 후 OmniLake LanceDB 인덱싱 자동 실행")
 

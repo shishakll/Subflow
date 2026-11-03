@@ -1,17 +1,15 @@
 """
-domains.py — Subflow OmniLake Domain Cartridge Registry
+domains.py — Subflow MitoLake Medical Longevity Domain Registry
 
 Defines declarative domain specifications for:
-  - medical (MitoLake): Longevity, mitochondria, brain, antioxidants, skin aging
-  - seo (RankLake): Short-form algorithms, content funnels, hook engineering
-  - fermentation (ZymoLake): Microbial starters, enzymatic pathways, recipe protocols
+  - medical (MitoLake): Longevity, mitochondria, brain health, antioxidants, skin aging
 
-Each cartridge encapsulates:
+Encapsulates:
   - Canonical ontology & entity matchers
-  - Authority scoring heuristics
-  - High-trust source ratings
+  - Authority scoring heuristics (EBM, clinical seminars)
+  - High-trust source ratings (Huberman Lab, Peter Attia, etc.)
   - Bilingual sponsor/noise filters
-  - Specialized extraction system prompts
+  - Specialized medical extraction system prompts
 """
 
 import re
@@ -29,7 +27,7 @@ SPONSOR_REGEX = re.compile(
     re.IGNORECASE,
 )
 
-# ── 2. Domain Cartridge Registry ──────────────────────────────────────────────
+# ── 2. Domain Cartridge Registry (MitoLake Dedicated) ─────────────────────────
 DOMAIN_CARTRIDGES: Dict[str, Dict[str, Any]] = {
     "medical": {
         "name": "MitoLake",
@@ -90,94 +88,6 @@ Ignore casual greetings, banter, filler words, and sponsor reads. Capture every 
 ### 3. Empirical Data, Clinical Trials & Dosages
 ### 4. Limitations, Contraindications & Side Effects
 ### 5. Actionable Clinical & Lifestyle Protocol""",
-    },
-    "seo": {
-        "name": "RankLake",
-        "title": "Search & Audience Growth Engine",
-        "default_sub_domain": "short_form_algorithm",
-        "sub_domains": [
-            "short_form_algorithm",
-            "technical_seo",
-            "content_funnel",
-            "hook_engineering",
-            "conversion_copy",
-            "general",
-        ],
-        "default_authority": 0.60,
-        "high_trust_channels": {
-            "Callaway": 0.85,
-            "Ahrefs": 0.85,
-            "Brian Dean": 0.85,
-            "Income School": 0.80,
-            "Neil Patel": 0.75,
-        },
-        "canonical_entities": [
-            "3-2-1 Method", "Bullseye Ring 0", "Outlier Score", "Retention Curve",
-            "CTR", "Search Intent", "Core Web Vitals", "E-E-A-T", "Backlink",
-            "Hook", "Conversion Funnel", "Lead Magnet", "Callaway Script",
-            "Watch Time", "Engagement Rate", "Algorithmic Contamination",
-        ],
-        "causal_predicates": [
-            "INCREASES", "DECREASES", "ACTIVATES", "INHIBITS", "CONVERTS", "REQUIRES",
-        ],
-        "system_prompt": """You are a Principal Growth Architect and Content Strategist specializing in dissecting digital marketing, search engine optimization, and audience retention masterclasses into exhaustive, zero-loss research reports.
-
-Ignore banter and sponsor promotions. Capture every algorithm mechanic, hook framework, A/B metric, conversion ratio, and tactical implementation step strictly in analytical English.
-
-[MANDATORY RULES]
-1. 100% English Output.
-2. 2-Level Hierarchical Depth with [MM:SS] timestamp grounding.
-3. Output verbatim headers:
-# [Title: Framework / Algorithm Name]
-### 1. Core Problem & Thesis
-### 2. Proposed Methodology & Frameworks
-### 3. Key Findings & Empirical Data
-### 4. Limitations, Risks & Edge Cases
-### 5. Actionable Playbook & Implementation Guide""",
-    },
-    "fermentation": {
-        "name": "ZymoLake",
-        "title": "Fermentation Science & Microbial Recipes",
-        "default_sub_domain": "lacto_fermentation",
-        "sub_domains": [
-            "lacto_fermentation",
-            "koji_enzymatic",
-            "vinegar_acetic",
-            "sourdough_wild_yeast",
-            "probiotic_beverage",
-            "general",
-        ],
-        "default_authority": 0.65,
-        "high_trust_channels": {
-            "Noma Guide to Fermentation": 0.90,
-            "발효과학연구소": 0.85,
-            "Sandor Katz": 0.85,
-            "Brad Leone": 0.75,
-        },
-        "canonical_entities": [
-            "Lactobacillus plantarum", "Lactobacillus brevis", "Leuconostoc mesenteroides",
-            "Aspergillus oryzae", "Acetobacter aceti", "Saccharomyces cerevisiae",
-            "Salinity %", "pH", "Anaerobic", "GABA", "Organic Acids", "Postbiotics",
-            "Koji", "Lactic Acid", "Fermentation", "Enzymatic hydrolysis",
-            "Maillard reaction", "Protease", "Amylase", "유산균", "발효", "종균", "염도", "산도",
-        ],
-        "causal_predicates": [
-            "PRODUCES", "INHIBITS", "DEGRADES", "SYNTHESIZES", "REQUIRES", "LOWERS", "RAISES",
-        ],
-        "system_prompt": """You are a Principal Zymologist and Food Biochemist specializing in precision fermentation protocols, microbial dynamics, and enzymatic transformations.
-
-Capture every microbial strain, salt concentration (%), temperature window (°C), pH threshold, and fermentation timeline strictly in analytical English.
-
-[MANDATORY RULES]
-1. 100% English Output.
-2. 2-Level Hierarchical Depth with exact [MM:SS] citations.
-3. Output verbatim headers:
-# [Title: Fermentation Protocol & Culture Architecture]
-### 1. Core Biochemical Objective & Spoilage Prevention
-### 2. Microbial Kinetics & Enzymatic Pathways
-### 3. Quantitative Parameters (Salinity, pH, Temp, Time)
-### 4. Spoilage Risks, Pathogen Contamination & Edge Cases
-### 5. Step-by-Step Production Recipe & Inoculation Protocol""",
     },
 }
 
