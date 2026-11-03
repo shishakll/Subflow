@@ -1,0 +1,323 @@
+import os
+import re
+import time
+import sqlite3
+import hashlib
+from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import requests
+from openai import OpenAI
+
+# ==============================================================================
+# Subflow Engine (jpro-router 전용 고속 자막 구조화 파이프라인)
+#
+# 원칙:
+# 1. jpro-router(http://127.0.0.1:4001) 코드는 일체 수정하지 않고 엔드포인트로만 사용합니다.
+# 2. 10개 이상의 계정 로테이션, 429 처리, Fallback 모델 전환은 jpro-router가 전담합니다.
+# 3. Subflow는 [SponsorBlock/VTT 정제 -> gpt-6.1-sol 단일 호출 -> 마크다운 저장]만 수행합니다.
+# ==============================================================================
+
+ROUTER_HOST = os.environ.get("JPRO_ROUTER_HOST", "http://127.0.0.1:4001")
+DB_PATH = Path("subflow_state.db")
+INPUT_DIR = Path("./transcripts")
+OUTPUT_DIR = Path("./structured_notes")
+
+INPUT_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# ── 1. jpro-router Zero-Config 디스커버리 ────────────────────────────────────
+def resolve_router_client() -> tuple[OpenAI, str]:
+    """
+    jpro-router의 무인증 /connect 엔드포인트를 호출하여
+    토큰과 엔드포인트 URL, 기본 가상 슬롯(gpt-6.1-sol)을 자동 취득합니다.
+    """
+    connect_url = f"{ROUTER_HOST}/connect"
+    try:
+        res = requests.get(connect_url, timeout=3)
+        if res.status_code == 200:
+            data = res.json()
+            base_url = data["endpoints"]["openai"]["base_url"]
+            auth_token = data.get("auth_token", "")
+            slot_model = data["endpoints"]["openai"]["default_model"]
+            print(f"[jpro-router] 로컬 프록시 연결 감지 성공: {base_url} (슬롯: {slot_model})")
+            client = OpenAI(base_url=base_url, api_key=auth_token or "local-token")
+            return client, slot_model
+    except Exception as e:
+        print(f"[jpro-router] /connect 자동 감지 실패 ({e}) -> 기본값 폴백 적용")
+
+    fallback_token = os.environ.get("LOCAL_PROXY_AUTH_TOKEN", "local-token")
+    client = OpenAI(base_url=f"{ROUTER_HOST}/openai/v1", api_key=fallback_token)
+    return client, "gpt-6.1-sol"
+
+# ── 2. 프롬프트 규격 ──────────────────────────────────────────────────────────
+SYSTEM_PROMPT = """당신은 학술 및 기술 인터뷰를 체계적으로 문서화하는 전문 연구원입니다.
+제공된 스크립트에서 인사말, 사담, 진행 멘트, 스폰서 광고를 완전히 무시하고 아래 규격의 Markdown 문서로만 작성하세요.
+
+[필수 준수 규칙]
+1. 모든 핵심 주장, 방법론, 실험 수치 끝에는 반드시 원문에 표시된 타임스탬프(예: [14:00], [75:00] 또는 [01:15:00])를 인용 표기하십시오.
+2. 원문에 근거가 없는 추론이나 수치는 절대 지어내지 마십시오.
+
+# [제목: 영상의 핵심 주제 및 대상 연구/기술명]
+
+### 1. 핵심 질문 및 문제 의식
+- 무엇을 해결하고자 하는가?
+
+### 2. 제안 방법론 및 프레임워크 (Methodology)
+- 구체적인 접근 단계, 메커니즘, 프로토콜 ([MM:SS] 인용 필수)
+
+### 3. 주요 연구 결과 및 검증 데이터 (Key Findings)
+- 실험 수치, 통계적 유의성, 정량적/정성적 지표 ([MM:SS] 인용 필수)
+
+### 4. 한계점 및 주의사항 (Limitations)
+- 화자가 언급한 예외 조건 및 부작용/제약 사항
+
+### 5. 현업 적용/실천 가이드 (Actionable Takeaways)
+- 즉시 실행 가능한 단계별 체크리스트 및 프로토콜 규격"""
+
+MAX_RETRIES = 5
+SAFE_CHAR_LIMIT = 400_000  # 약 100K~120K 토큰 안전 상한 (하위 Fallback 모델 컨텍스트 보호)
+REQUIRED_HEADERS = ("### 1.", "### 2.", "### 3.", "### 4.", "### 5.")
+CITATION_PATTERN = re.compile(r"\[\d{1,3}:\d{2}(?::\d{2})?\]")
+
+# ── 3. SQLite 상태 큐 ─────────────────────────────────────────────────────────
+def init_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS jobs (
+            file_hash TEXT PRIMARY KEY,
+            file_name TEXT NOT NULL,
+            video_id TEXT,
+            cleaned_text TEXT,
+            status TEXT DEFAULT 'PENDING',
+            retries INTEGER DEFAULT 0,
+            updated_at REAL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);")
+    conn.commit()
+    return conn
+
+# ── 4. 로컬 전처리 (SponsorBlock + VTT 롤링 중복 제거) ────────────────────────
+def fetch_sponsorblock(video_id: str) -> list[tuple[float, float]]:
+    if not video_id or len(video_id) != 11:
+        return []
+    url = (
+        f"https://sponsor.ajay.app/api/skipSegments?videoID={video_id}"
+        f'&categories=["sponsor","intro","outro","selfpromo","interaction"]'
+    )
+    try:
+        res = requests.get(url, timeout=3)
+        if res.status_code == 200:
+            return [(item["segment"][0], item["segment"][1]) for item in res.json()]
+    except Exception:
+        pass
+    return []
+
+def parse_time(ts: str) -> float:
+    parts = ts.replace(",", ".").split(":")
+    if len(parts) == 3:
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+    elif len(parts) == 2:
+        return int(parts[0]) * 60 + float(parts[1])
+    return 0.0
+
+def extract_non_overlapping_delta(prev_text: str, curr_text: str) -> str:
+    """
+    인접한 두 자막 블록(prev_text, curr_text) 간의 Prefix 및 Suffix-Prefix 최장 공통 구간을
+    탐지하여 순수 신규 발화(Delta)만 추출합니다. (2줄 이상 롤링 캡션 완벽 대응)
+    """
+    if not prev_text:
+        return curr_text
+    if curr_text == prev_text or curr_text in prev_text:
+        return ""
+    if curr_text.startswith(prev_text):
+        return curr_text[len(prev_text):].strip()
+
+    # 단어 단위로 prev_text의 접미사(Suffix)와 curr_text의 접두사(Prefix) 간 최대 겹침 계산
+    prev_words = prev_text.split()
+    curr_words = curr_text.split()
+    max_overlap = min(len(prev_words), len(curr_words))
+
+    for k in range(max_overlap, 0, -1):
+        if prev_words[-k:] == curr_words[:k]:
+            return " ".join(curr_words[k:]).strip()
+
+    return curr_text
+
+def format_timestamp(sec: float) -> str:
+    mm, ss = divmod(int(sec), 60)
+    return f"[{mm:02d}:{ss:02d}]"
+
+def clean_transcript(file_path: Path, video_id: str) -> str:
+    raw = file_path.read_text(encoding="utf-8", errors="ignore")
+    skip_intervals = fetch_sponsorblock(video_id)
+
+    pattern = re.compile(
+        r"(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}(?::\d{2})?[.,]\d{1,3}).*?\n(.*?)(?=\n\n|\n\d+\n|\Z)",
+        re.DOTALL
+    )
+    matches = pattern.findall(raw)
+
+    if not matches:
+        text = re.sub(r"\b(um|uh|you know|어|음|그니까)\b", "", raw, flags=re.IGNORECASE)
+        normalized = re.sub(r"\s+", " ", text).strip()
+        return normalized[:SAFE_CHAR_LIMIT]
+
+    cleaned_chunks = []
+    prev_text = ""
+    last_marker = -60.0
+
+    for start_str, _end_str, content in matches:
+        start_sec = parse_time(start_str)
+        if any(s <= start_sec <= e for s, e in skip_intervals):
+            continue
+
+        line = re.sub(r"<[^>]+>", "", content).replace("\n", " ").strip()
+        line = re.sub(r"\s+", " ", line)
+        if not line or line == prev_text:
+            continue
+
+        # 롤링 캡션 중복 제거 (Prefix 및 Suffix-Prefix 슬라이딩 윈도우 병합)
+        delta = extract_non_overlapping_delta(prev_text, line)
+        prev_text = line
+
+        if not delta:
+            continue
+
+        if start_sec - last_marker >= 60.0:
+            cleaned_chunks.append(f"\n{format_timestamp(start_sec)} ")
+            last_marker = start_sec
+
+        cleaned_chunks.append(delta)
+
+    full_cleaned = " ".join(cleaned_chunks).strip()
+    if len(full_cleaned) > SAFE_CHAR_LIMIT:
+        full_cleaned = full_cleaned[:SAFE_CHAR_LIMIT]
+    return full_cleaned
+
+def validate_markdown_output(content: str) -> None:
+    """
+    생성된 마크다운 리포트의 최소 길이, 필수 5단 섹션 헤더, 타임스탬프 인용 여부를 검증합니다.
+    """
+    text = (content or "").strip()
+    if len(text) < 150:
+        raise ValueError(f"생성된 노트가 너무 짧습니다 ({len(text)}자 < 150자).")
+
+    missing_headers = [h for h in REQUIRED_HEADERS if h not in text]
+    if missing_headers:
+        raise ValueError(f"필수 섹션 헤더가 누락되었습니다: {missing_headers}")
+
+    if not CITATION_PATTERN.search(text):
+        raise ValueError("본문 내 타임스탬프 인용([MM:SS])이 최소 1회 이상 포함되어야 합니다.")
+
+def resolve_output_path(f_name: str, f_hash: str) -> Path:
+    """
+    동명 파일 충돌을 방지하기 위해 기존 파일이 다른 해시로 생성된 경우 해시 접미사를 부여합니다.
+    """
+    candidate = OUTPUT_DIR / f"{f_name}.md"
+    if not candidate.exists():
+        return candidate
+
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT file_hash FROM jobs WHERE file_name = ? AND status = 'DONE' AND file_hash != ?",
+            (f_name, f_hash)
+        ).fetchone()
+    if row:
+        return OUTPUT_DIR / f"{f_name}_{f_hash[:8]}.md"
+    return candidate
+
+# ── 5. 단일 작업 처리기 ─────────────────────────────────────────────────────────
+def process_single_job(client: OpenAI, slot_model: str, job: tuple) -> bool:
+    f_hash, f_name, cleaned_text, retries = job
+    out_file = resolve_output_path(f_name, f_hash)
+
+    try:
+        # jpro-router에 단일 요청 전송 (프록시가 10+개 키 로테이션 및 폴백 자동 집행)
+        resp = client.chat.completions.create(
+            model=slot_model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": cleaned_text}
+            ],
+            temperature=0.15,
+            timeout=300.0
+        )
+
+        content = resp.choices[0].message.content
+        validate_markdown_output(content)
+
+        out_file.write_text(content, encoding="utf-8")
+
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "UPDATE jobs SET status = 'DONE', updated_at = ? WHERE file_hash = ?",
+                (time.time(), f_hash)
+            )
+        print(f"[성공] {f_name} -> {out_file.name}")
+        return True
+
+    except Exception as e:
+        new_retries = retries + 1
+        new_status = "FAILED" if new_retries >= MAX_RETRIES else "PENDING"
+        print(f"[실패] {f_name} (시도 {new_retries}/{MAX_RETRIES}, 상태={new_status}): {e}")
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "UPDATE jobs SET retries = ?, status = ?, updated_at = ? WHERE file_hash = ?",
+                (new_retries, new_status, time.time(), f_hash)
+            )
+        return False
+    finally:
+        # 워커 스레드 내에서 1.0초 안전 지터 유지 (Least-In-Flight 재정렬 보장)
+        time.sleep(1.0)
+
+# ── 6. 메인 배치 파이프라인 ───────────────────────────────────────────────────
+def run_pipeline(concurrency: int = 2):
+    """
+    jpro-router가 10개 이상의 계정을 관리하므로,
+    Subflow는 굳이 35초씩 기다리지 않고 2개 스레드 동시 처리 및 최소 대기로 100개를 고속 완주합니다.
+    """
+    client, slot_model = resolve_router_client()
+    conn = init_db()
+
+    # 1. 신규 파일 스캔 및 큐 등록
+    for file_path in sorted(INPUT_DIR.glob("*.*")):
+        if file_path.suffix.lower() not in {".vtt", ".srt", ".txt"}:
+            continue
+        file_bytes = file_path.read_bytes()
+        f_hash = hashlib.sha256(file_bytes).hexdigest()
+
+        cur = conn.execute("SELECT status FROM jobs WHERE file_hash = ?", (f_hash,))
+        if cur.fetchone():
+            continue
+
+        vid_match = re.search(r"\[([a-zA-Z0-9_-]{11})\]", file_path.stem)
+        video_id = vid_match.group(1) if vid_match else ""
+
+        cleaned = clean_transcript(file_path, video_id)
+        conn.execute(
+            "INSERT INTO jobs (file_hash, file_name, video_id, cleaned_text, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (f_hash, file_path.stem, video_id, cleaned, time.time())
+        )
+    conn.commit()
+
+    # 2. 대기 목록 가져오기
+    jobs = conn.execute(
+        "SELECT file_hash, file_name, cleaned_text, retries FROM jobs WHERE status = 'PENDING' AND retries < ? LIMIT 100",
+        (MAX_RETRIES,)
+    ).fetchall()
+
+    if not jobs:
+        print("[완료] 처리할 대기 스크립트가 없습니다.")
+        return
+
+    print(f"[시작] 총 {len(jobs)}개 스크립트 구조화 시작 (동시성: {concurrency}, 슬롯: {slot_model})")
+
+    # 3. 고속 배치 실행
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = {executor.submit(process_single_job, client, slot_model, job): job for job in jobs}
+        for future in as_completed(futures):
+            _ = future.result()
+
+if __name__ == "__main__":
+    run_pipeline(concurrency=2)
