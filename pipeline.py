@@ -50,41 +50,42 @@ def resolve_router_client() -> tuple[OpenAI, str]:
     return client, "gpt-6.1-sol"
 
 # ── 2. 프롬프트 규격 ──────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """당신은 학술 및 기술 인터뷰를 체계적으로 문서화하는 전문 연구원입니다.
-제공된 스크립트에서 인사말, 사담, 진행 멘트, 스폰서 광고를 완전히 무시하고 아래 규격의 Markdown 문서로만 작성하세요.
+SYSTEM_PROMPT = """당신은 학술 세미나, 심층 인터뷰, 기술/비즈니스 롱폼 영상을 원문 손실 없이 체계적으로 해부하여 문서화하는 수석 연구원입니다.
+제공된 스크립트에서 단순 인사말, 추임새, 스폰서 광고만 제거하고, 영상에 등장하는 **모든 핵심 프레임워크, 세부 방법론, 실무 노하우, 에피소드, 수치 데이터, 프롬프트/공식**을 빠짐없이 포착하여 아래 규격의 고밀도 심층 Markdown 리포트로 작성하세요.
 
 [필수 준수 규칙 - 위반 시 출력 거부됨]
-1. 모든 핵심 주장, 방법론, 실험 수치 끝에는 반드시 원문에 표시된 타임스탬프(예: [14:00], [75:00] 또는 [01:15:00])를 인용 표기하십시오.
-2. 원문에 근거가 없는 추론이나 수치는 절대 지어내지 마십시오.
-3. 아래 5개 섹션 헤더를 **반드시 모두 포함**하여 출력하십시오. 누락 시 검증 실패합니다.
+1. 단문 개조식 요약을 금지합니다. 각 항목은 **상위 핵심 명제 + 하위 세부 설명(메커니즘, 이유, 구체적 예시, 실행 공식)**의 2단 계층 구조(Nested Bullets)로 깊이 있게 서술하십시오.
+2. 방법론이나 프레임워크를 설명할 때는 명칭의 유래/정의(예: 왜 3-2-1인지 각 숫자의 의미), 단계별 프로토콜, 부수적으로 언급된 실무 팁(예: 프로필 Bio 설계 공식, 보조 AI 툴 활용 에피소드 등)까지 생략 없이 모두 포함하십시오.
+3. 모든 핵심 주장, 방법론, 실험 수치, 사례 끝에는 반드시 원문에 표시된 타임스탬프(예: [14:00], [75:00])를 인용 표기하십시오. (최소 25회 이상 전 구간에 걸쳐 촘촘히 인용)
+4. 원문에 근거가 없는 추론이나 수치는 절대 지어내지 마십시오.
+5. 아래 5개 섹션 헤더를 **반드시 모두 포함**하여 전체 분량 **6,000자~8,000자(약 1,200~1,600 어절) 수준**의 심층 리포트로 작성하십시오.
 
 === 출력 규격 (반드시 이 헤더들을 정확히 사용) ===
 
-# [제목: 영상의 핵심 주제 및 대상 연구/기술명]
+# [제목: 영상의 핵심 주제 및 대상 연구/기술/프레임워크명]
 
 ### 1. 핵심 질문 및 문제 의식
-- 무엇을 해결하고자 하는가?
+- 해결하고자 하는 근본 문제, 기존 통념의 구조적 오류, 화자의 배경 및 핵심 통찰을 4~6개 대항목(각 항목당 하위 불릿 2~3개)으로 상세히 서술 ([MM:SS] 인용 필수)
 
 ### 2. 제안 방법론 및 프레임워크 (Methodology)
-- 구체적인 접근 단계, 메커니즘, 프로토콜 ([MM:SS] 인용 필수)
+- 영상에 등장한 **모든 주요 프레임워크와 부수적 실무 전술**을 하나도 빠뜨리지 말고 각각 독립된 대항목으로 분류한 뒤, 각 항목 아래에 ① 개념 정의 및 구조 ② 단계별 작동 메커니즘 ③ 실제 적용 예시/프롬프트/수치를 하위 불릿으로 상세히 해부 ([MM:SS] 인용 필수)
 
 ### 3. 주요 연구 결과 및 검증 데이터 (Key Findings)
-- 실험 수치, 통계적 유의성, 정량적/정성적 지표 ([MM:SS] 인용 필수)
+- 영상 전반에 언급된 모든 정량적 성과, 전환율 공식, A/B 비교 사례, 기존 방식 대비 효율 비교, AI/데이터 분석이 도출한 세부 패턴 목록(예: 7가지 패턴 각각의 상세 내용) 등을 누락 없이 최소 6~10개 대항목으로 정밀 기록 ([MM:SS] 인용 필수)
 
 ### 4. 한계점 및 주의사항 (Limitations)
-- 화자가 언급한 예외 조건 및 부작용/제약 사항
+- 화자가 경고한 예외 조건, 잘못된 적용 시 발생하는 부작용(알고리즘 오염, 파생 콘텐츠화 등), 도구의 한계 및 이를 극복하기 위한 우회 조건을 최소 5~7개 대항목으로 구체적 맥락과 함께 서술 ([MM:SS] 인용 필수)
 
 ### 5. 현업 적용/실천 가이드 (Actionable Takeaways)
-- 즉시 실행 가능한 단계별 체크리스트 및 프로토콜 규격
+- 영상을 직접 보지 않고 이 문서만 읽고도 100% 동일하게 복제 실행할 수 있도록, 사전 준비부터 주간 루틴·측정 지표·도구 세팅·확장 로드맵까지 최소 6~8단계(각 단계별 하위 액션 아이템 포함)로 상세히 작성 ([MM:SS] 인용 필수)
 
 === 중요 ===
 위 5개 헤더(### 1. ~ ### 5.)는 **반드시 그대로 출력**하십시오.
-각 섹션에 최소 3줄 이상 구체적인 내용과 수치를 채우십시오.
-타임스탬프 인용([MM:SS] 형식)은 본문 곳곳에 최소 5회 이상 포함하십시오.
+초압축 요약을 지양하고, 원문의 디테일과 사례가 살아있도록 기존 요약본 대비 **2배 이상의 정보 밀도와 분량(6,000자 이상)**으로 풍부하게 서술하십시오.
 마지막 5번 섹션의 끝 문장까지 절대 중간에 끊기지 않도록 완결된 문장으로 마무리하십시오."""
 
 MAX_RETRIES = 5
-MAX_OUTPUT_TOKENS = 8192
+MAX_OUTPUT_TOKENS = 16384
 SAFE_CHAR_LIMIT = 400_000  # 약 100K~120K 토큰 안전 상한 (하위 Fallback 모델 컨텍스트 보호)
 REQUIRED_HEADERS = ("### 1.", "### 2.", "### 3.", "### 4.", "### 5.")
 CITATION_PATTERN = re.compile(r"\[\d{1,3}:\d{2}(?::\d{2})?\]")
@@ -206,7 +207,7 @@ def clean_transcript(file_path: Path, video_id: str) -> str:
         full_cleaned = full_cleaned[:SAFE_CHAR_LIMIT]
     return full_cleaned
 
-def validate_markdown_output(content: str, finish_reason: str | None = None) -> None:
+def validate_markdown_output(content: str, finish_reason: str | None = None, min_length: int = 150) -> None:
     """
     생성된 마크다운 리포트의 최소 길이, 필수 5단 섹션 헤더, 타임스탬프 인용 여부 및 문장 완결성을 검증합니다.
     """
@@ -214,8 +215,8 @@ def validate_markdown_output(content: str, finish_reason: str | None = None) -> 
         raise ValueError("출력 토큰 상한 도달로 인해 리포트가 중간에 절단되었습니다 (finish_reason=length).")
 
     text = (content or "").strip()
-    if len(text) < 150:
-        raise ValueError(f"생성된 노트가 너무 짧습니다 ({len(text)}자 < 150자).")
+    if len(text) < min_length:
+        raise ValueError(f"생성된 노트가 목표 밀도보다 짧습니다 ({len(text)}자 < {min_length}자).")
 
     missing_headers = [h for h in REQUIRED_HEADERS if h not in text]
     if missing_headers:
@@ -271,7 +272,8 @@ def process_single_job(client: OpenAI, slot_model: str, job: tuple) -> bool:
 
         choice = resp.choices[0]
         content = choice.message.content
-        validate_markdown_output(content, finish_reason=choice.finish_reason)
+        target_min_len = 5000 if len(cleaned_text) >= 50000 else 150
+        validate_markdown_output(content, finish_reason=choice.finish_reason, min_length=target_min_len)
 
         out_file.write_text(content, encoding="utf-8")
 
