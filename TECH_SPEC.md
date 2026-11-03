@@ -25,11 +25,18 @@
 
 ```
 +-----------------------------------------------------------------------------------+
-|                            Subflow Processing Pipeline                            |
+|                        Subflow Two-Tier Ingestion & Pipeline                      |
 +-----------------------------------------------------------------------------------+
                                          │
-        [ 1. Ingestion ]                 ▼
-  transcripts/*.vtt, *.srt ──► [ SHA-256 Hash Audit & SQLite State Queue ]
+        [ 0. Collection (collector.py) ] ▼
+  YouTube URLs / Playlists / Channel ──► [ Tier 1: youtube-transcript-api ]
+                                               │ (On 429 / IpBlocked fallback)
+                                               ▼
+                                         [ Tier 2: yt-dlp + Chrome Cookies ]
+                                               │
+                                               ▼ (Writes transcripts/*_[11charID].vtt)
+        [ 1. Ingestion (pipeline.py) ]   │
+  transcripts/*.vtt, *.srt ─────────────► [ SHA-256 Hash Audit & SQLite State Queue ]
                                          │
         [ 2. Preprocessing ]             ▼
                        ┌──► [ SponsorBlock API (Skip Sponsor/Intro Intervals) ]
@@ -65,6 +72,22 @@
 ---
 
 ## 3. Detailed Component Specifications
+
+### 3.0 Tier 0: Two-Tier Resilient YouTube Collector (`collector.py`)
+
+구글/유튜브의 IP 차단(HTTP 429 Too Many Requests, 봇 탐지)을 완벽히 방어하면서 자막을 안전하고 빠르게 수집하는 독립 CLI 수집기.
+
+#### 3.0.1 2단계 하이브리드 수집 체인
+1. **Tier 1 (기본 초고속 API)**: `youtube-transcript-api` (v1.2.4+)
+   - 영상/오디오 미디어를 스트리밍하지 않고 수 KB 단위의 순수 자막 데이터만 HTTP 세션으로 직접 추출.
+   - 추출된 스니펫을 WebVTT 표준(`WEBVTT\n\n00:00:00.000 --> 00:00:05.000\n본문`)으로 즉시 직렬화하여 저장.
+2. **Tier 2 (안전 밸브 폴백)**: `yt-dlp` + 브라우저 쿠키 패스스루
+   - Tier 1에서 `IpBlocked`, `RequestBlocked`, 429 감지 시 즉시 가동.
+   - `--cookies-from-browser chrome` 및 `--ignore-no-formats-error`를 통해 봇 챌린지 돌파 및 자동 생성 자막(.vtt) 추출.
+
+#### 3.0.2 Rate Limit 방어 및 멱등성
+- **난수 지터(Random Jitter)**: 연속 다운로드 간 `2.0s ~ 5.0s` 무작위 대기로 기계적 패턴 탐지 회피.
+- **중복 다운로드 스킵**: `transcripts/*_[video_id].*` 파일 존재 여부 및 `subflow_state.db` 완료 상태를 사전 조회하여 미수집 대상만 선별 수집.
 
 ### 3.1 Tier 1: Local Deterministic Preprocessing (`clean_transcript`)
 
@@ -221,8 +244,9 @@ Subflow 프로젝트 루트(`/Users/jameskim/Projects/Subflow`)의 파일 구성
 
 ```
 /Users/jameskim/Projects/Subflow
+├── collector.py           # [Ingestion] 2-Tier Resilient 자막 수집기 (youtube-transcript-api + yt-dlp)
 ├── pipeline.py            # [Core] 무인증 디스커버리, VTT 정제, 고속 2스레드 배치 워커
-├── requirements.txt       # [Dependencies] openai, requests
+├── requirements.txt       # [Dependencies] openai, requests, youtube-transcript-api, yt-dlp
 ├── subflow_state.db       # [State Store] SQLite 작업 큐 및 해시 인덱스 (실행 시 자동 생성)
 ├── transcripts/           # [Input] 로컬 자막 원본 파일 (.vtt, .srt, .txt) 보관 디렉토리
 ├── structured_notes/      # [Output] 완성된 구조화 마크다운 리포트 저장 디렉토리
@@ -239,10 +263,15 @@ Subflow 프로젝트 루트(`/Users/jameskim/Projects/Subflow`)의 파일 구성
    curl -s http://127.0.0.1:4001/connect | jq .status
    # "running" 확인
    ```
-2. **Subflow 자막 투입**:
-   - `yt-dlp` 등을 통해 `transcripts/` 폴더에 자막을 다운로드한다.
-   - 파일명에 유튜브 비디오 ID가 포함되면 SponsorBlock 연동이 자동 활성화된다. (예: `Lecture_Title_[dQw4w9WgXcQ].vtt`)
-3. **배치 파이프라인 기동**:
+2. **Subflow 자막 수집 (신규 2-Tier Collector)**:
+   ```bash
+   # 단일 영상 수집 (자동 Tier 1 ➔ Tier 2 폴백 및 2~5초 지터 적용)
+   python collector.py "https://www.youtube.com/watch?v=lZc30sUfx64"
+
+   # 또는 재생목록 / 채널 수집 후 즉시 pipeline.py까지 원스톱 실행
+   python collector.py "https://www.youtube.com/playlist?list=..." --run-pipeline
+   ```
+3. **배치 파이프라인 수동 기동 (기존 파일 일괄 처리)**:
    ```bash
    python pipeline.py
    ```

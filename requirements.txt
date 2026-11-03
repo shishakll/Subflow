@@ -1,2 +1,4 @@
 openai>=1.0.0
 requests>=2.28.0
+youtube-transcript-api>=1.2.4
+yt-dlp>=2024.10.0

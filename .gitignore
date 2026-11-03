@@ -1,2 +1,19 @@
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+
+# Python & Environment
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv*/
+
+# Subflow data & local stores
+subflow_state.db
+transcripts/*
+!transcripts/.gitkeep
+structured_notes/*
+!structured_notes/.gitkeep
+
+# macOS
+.DS_Store
