@@ -194,9 +194,9 @@ def fetch_tier1_transcript(video_id: str) -> Optional[str]:
         from youtube_transcript_api import YouTubeTranscriptApi
         api = YouTubeTranscriptApi()
 
-        # Try Korean first, then English
+        # Try English first, then Korean fallback
         try:
-            snippets = api.fetch(video_id, languages=["ko", "ko-KR", "en", "en-US"])
+            snippets = api.fetch(video_id, languages=["en", "en-US", "en-GB", "ko", "ko-KR"])
             if snippets:
                 return serialize_to_vtt(list(snippets))
         except Exception:
@@ -205,9 +205,9 @@ def fetch_tier1_transcript(video_id: str) -> Optional[str]:
         # Try list & translate fallback
         try:
             t_list = api.list(video_id)
-            # Find any available transcript
+            # Find any available transcript (English prioritized)
             target_t = None
-            for lang in ["ko", "en"]:
+            for lang in ["en", "en-US", "en-GB", "ko"]:
                 try:
                     target_t = t_list.find_transcript([lang])
                     break
@@ -215,11 +215,11 @@ def fetch_tier1_transcript(video_id: str) -> Optional[str]:
                     pass
 
             if not target_t:
-                # Pick the first available and translate to Korean if translatable
+                # Pick the first available and translate to English if translatable
                 for t in t_list:
                     if t.is_translatable:
                         try:
-                            target_t = t.translate("ko")
+                            target_t = t.translate("en")
                             break
                         except Exception:
                             pass
@@ -267,7 +267,7 @@ def fetch_tier2_ytdlp(
         "--skip-download",
         "--write-auto-sub",
         "--write-sub",
-        "--sub-lang", "ko,en",
+        "--sub-lang", "en,en-US,en-GB,ko",
         "--sub-format", "vtt",
         "--ignore-no-formats-error",
         "-o", out_template,

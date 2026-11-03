@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import time
 import sqlite3
 import hashlib
@@ -49,47 +50,67 @@ def resolve_router_client() -> tuple[OpenAI, str]:
     client = OpenAI(base_url=f"{ROUTER_HOST}/openai/v1", api_key=fallback_token)
     return client, "gpt-6.1-sol"
 
-# ── 2. 프롬프트 규격 ──────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """당신은 학술 세미나, 심층 인터뷰, 기술/비즈니스 롱폼 영상을 원문 손실 없이 체계적으로 해부하여 문서화하는 수석 연구원입니다.
-제공된 스크립트에서 단순 인사말, 추임새, 스폰서 광고만 제거하고, 영상에 등장하는 **모든 핵심 프레임워크, 세부 방법론, 실무 노하우, 에피소드, 수치 데이터, 프롬프트/공식**을 빠짐없이 포착하여 아래 규격의 고밀도 심층 Markdown 리포트로 작성하세요.
+# ── 2. English Prompt & Hybrid Quality Gate Specifications ────────────────────
+SYSTEM_PROMPT = """You are a Principal Research Analyst and Technical Writer specializing in dissecting long-form academic seminars, technical podcasts, and deep-dive business/engineering interviews into exhaustive, zero-loss structured Markdown research reports.
 
-[필수 준수 규칙 - 위반 시 출력 거부됨]
-1. 단문 개조식 요약을 금지합니다. 각 항목은 **상위 핵심 명제 + 하위 세부 설명(메커니즘, 이유, 구체적 예시, 실행 공식)**의 2단 계층 구조(Nested Bullets)로 깊이 있게 서술하십시오.
-2. 방법론이나 프레임워크를 설명할 때는 명칭의 유래/정의(예: 왜 3-2-1인지 각 숫자의 의미), 단계별 프로토콜, 부수적으로 언급된 실무 팁(예: 프로필 Bio 설계 공식, 보조 AI 툴 활용 에피소드 등)까지 생략 없이 모두 포함하십시오.
-3. 모든 핵심 주장, 방법론, 실험 수치, 사례 끝에는 반드시 원문에 표시된 타임스탬프(예: [14:00], [75:00])를 인용 표기하십시오. (최소 25회 이상 전 구간에 걸쳐 촘촘히 인용)
-4. 원문에 근거가 없는 추론이나 수치는 절대 지어내지 마십시오.
-5. 아래 5개 섹션 헤더를 **반드시 모두 포함**하여 전체 분량 **6,000자~8,000자(약 1,200~1,600 어절) 수준**의 심층 리포트로 작성하십시오.
+Ignore casual greetings, small talk, filler words, and sponsor reads. Capture **every core framework, multi-step methodology, tactical workflow, quantitative metric, case study, and formula/prompt** from the transcript and write an exhaustive, high-density report **strictly in English**.
 
-=== 출력 규격 (반드시 이 헤더들을 정확히 사용) ===
+[MANDATORY RULES - VIOLATION CAUSES IMMEDIATE REJECTION]
+1. **100% English Output**: Write the entire report strictly in fluent, high-precision analytical English. Do NOT translate into Korean or any other language.
+2. **2-Level Hierarchical Depth (No Flat Summaries)**: Single-line shorthand bullets are prohibited. Every major point in EVERY section (`### 1.` through `### 5.`) MUST use top-level bullets (`- `) with 2-space indented sub-bullets (`  - `):
+   - `- **Main Thesis / Framework Name**: High-level definition and core objective [MM:SS].`
+     - `  - **Mechanism / Protocol**: Step-by-step operational logic, exact sub-components (e.g., all rings, all buckets, all steps), and why it works [MM:SS].`
+     - `  - **Concrete Example / Formula / Prompt**: Exact real-world examples, numbers, bio formulas, or prompts demonstrated in the transcript [MM:SS].`
+3. **Exhaustive Methodology Coverage**: Include the origin/meaning of framework names (e.g., what each number in a named method represents), auxiliary tactical formulas (e.g., profile bio 3-line structure, tool settings, filtering thresholds), and all sub-steps without omission.
+4. **Strict Timestamp Grounding Across All Segments**: Append exact `[MM:SS]` timestamps from the source transcript to the end of every claim, metric, and step. You MUST include **at least 30+ citations** distributed evenly across the **Early (first third), Middle (second third), and Late (final third)** portions of the transcript. Never fabricate timestamps.
+5. **Required 5-Section Structure & High Density**: Include all 5 exact section headers below (`### 1.` through `### 5.`), producing an exhaustive report of **8,000 to 15,000 characters (~1,400 to 2,500 words)**.
 
-# [제목: 영상의 핵심 주제 및 대상 연구/기술/프레임워크명]
+=== REQUIRED OUTPUT FORMAT (USE THESE EXACT HEADERS) ===
 
-### 1. 핵심 질문 및 문제 의식
-- 해결하고자 하는 근본 문제, 기존 통념의 구조적 오류, 화자의 배경 및 핵심 통찰을 4~6개 대항목(각 항목당 하위 불릿 2~3개)으로 상세히 서술 ([MM:SS] 인용 필수)
+# [Title: Core Topic & Target Framework / Methodology Name]
 
-### 2. 제안 방법론 및 프레임워크 (Methodology)
-- 영상에 등장한 **모든 주요 프레임워크와 부수적 실무 전술**을 하나도 빠뜨리지 말고 각각 독립된 대항목으로 분류한 뒤, 각 항목 아래에 ① 개념 정의 및 구조 ② 단계별 작동 메커니즘 ③ 실제 적용 예시/프롬프트/수치를 하위 불릿으로 상세히 해부 ([MM:SS] 인용 필수)
+### 1. Core Problem & Thesis
+- Dissect the fundamental problem being solved, structural flaws in conventional wisdom, the speaker's background/credibility, and the overarching thesis in 4–6 major bullets (each with 2–3 indented sub-bullets and `[MM:SS]` citations).
 
-### 3. 주요 연구 결과 및 검증 데이터 (Key Findings)
-- 영상 전반에 언급된 모든 정량적 성과, 전환율 공식, A/B 비교 사례, 기존 방식 대비 효율 비교, AI/데이터 분석이 도출한 세부 패턴 목록(예: 7가지 패턴 각각의 상세 내용) 등을 누락 없이 최소 6~10개 대항목으로 정밀 기록 ([MM:SS] 인용 필수)
+### 2. Proposed Methodology & Frameworks
+- Break down **every major framework, system, and tactical formula** in the transcript as its own dedicated top-level bullet. Under each framework, use indented sub-bullets to detail: (a) Definition & structural components, (b) Step-by-step execution mechanism, and (c) Concrete examples, prompts, or thresholds (`[MM:SS]` citations required).
 
-### 4. 한계점 및 주의사항 (Limitations)
-- 화자가 경고한 예외 조건, 잘못된 적용 시 발생하는 부작용(알고리즘 오염, 파생 콘텐츠화 등), 도구의 한계 및 이를 극복하기 위한 우회 조건을 최소 5~7개 대항목으로 구체적 맥락과 함께 서술 ([MM:SS] 인용 필수)
+### 3. Key Findings & Empirical Data
+- Document all quantitative results, conversion ratios, A/B comparisons, old-vs-new account benchmarks, filtering thresholds, and complete lists of data-mined patterns (e.g., all 7 hidden patterns with their exact metrics) across 6–10 major bullets with indented sub-bullets (`[MM:SS]` citations required).
 
-### 5. 현업 적용/실천 가이드 (Actionable Takeaways)
-- 영상을 직접 보지 않고 이 문서만 읽고도 100% 동일하게 복제 실행할 수 있도록, 사전 준비부터 주간 루틴·측정 지표·도구 세팅·확장 로드맵까지 최소 6~8단계(각 단계별 하위 액션 아이템 포함)로 상세히 작성 ([MM:SS] 인용 필수)
+### 4. Limitations, Risks & Edge Cases
+- Detail 5–7 major operational risks, failure modes (e.g., algorithmic contamination, derivative content traps, automation myths), boundary conditions, and how to mitigate them (`[MM:SS]` citations required).
 
-=== 중요 ===
-위 5개 헤더(### 1. ~ ### 5.)는 **반드시 그대로 출력**하십시오.
-초압축 요약을 지양하고, 원문의 디테일과 사례가 살아있도록 기존 요약본 대비 **2배 이상의 정보 밀도와 분량(6,000자 이상)**으로 풍부하게 서술하십시오.
-마지막 5번 섹션의 끝 문장까지 절대 중간에 끊기지 않도록 완결된 문장으로 마무리하십시오."""
+### 5. Actionable Playbook & Implementation Guide
+- Provide a complete, step-by-step replication protocol (`Step 0` through `Step 7`) that allows a practitioner to execute the entire system from scratch without watching the video, including setup, weekly sprint cadence, tracking metrics, and scaling roadmap (`[MM:SS]` citations required).
+
+=== CRITICAL REMINDER ===
+Output all 5 section headers (`### 1.` through `### 5.`) verbatim.
+Never stop summarizing early; cover the entire transcript from `[00:00]` through the final timestamp.
+Finish Section 5 with a complete, well-formed concluding sentence."""
+
+JUDGE_SYSTEM_PROMPT = """You are a strict Quality Assurance Auditor evaluating a structured Markdown research report generated from a long-form video transcript.
+Evaluate the report against the provided ground-truth transcript excerpts and return ONLY a single valid JSON object (no markdown fences, no commentary) with the exact keys:
+- "pass": boolean (true if score >= 80 and no critical hallucinations/truncations, else false)
+- "score": integer (0 to 100, sum of the 4 rubric scores below)
+- "scores": object with integer keys "factual_grounding" (0-25), "framework_depth" (0-25), "section_alignment" (0-25), "completeness_and_clarity" (0-25)
+- "defects": array of strings (empty array [] if pass is true, otherwise specific actionable fixes)
+
+Scoring Rubric (0-25 points each, total 100):
+1. factual_grounding (0-25): Claims, numbers, and mechanisms cited at [MM:SS] accurately reflect the source transcript without fabrication.
+2. framework_depth (0-25): Methodologies in Section 2 and Playbook steps in Section 5 explain concrete mechanisms, sub-components, formulas, and examples in 2-level hierarchical depth.
+3. section_alignment (0-25): All 5 sections (1: Problem/Thesis, 2: Methodology, 3: Empirical Data, 4: Limitations/Risks, 5: Actionable Playbook) strictly fulfill their distinct analytical goals.
+4. completeness_and_clarity (0-25): Written 100% in fluent English, covers early/middle/late parts of the transcript, and ends with a complete sentence without truncation."""
 
 MAX_RETRIES = 5
 MAX_OUTPUT_TOKENS = 16384
-SAFE_CHAR_LIMIT = 400_000  # 약 100K~120K 토큰 안전 상한 (하위 Fallback 모델 컨텍스트 보호)
+SAFE_CHAR_LIMIT = 400_000  # ~100K-120K token safety cap for fallback models
 REQUIRED_HEADERS = ("### 1.", "### 2.", "### 3.", "### 4.", "### 5.")
-CITATION_PATTERN = re.compile(r"\[\d{1,3}:\d{2}(?::\d{2})?\]")
+CITATION_PATTERN = re.compile(r"\[(\d{1,3}:\d{2}(?::\d{2})?)\]")
 TRUNCATED_END_CHARS = ("·", ",", ":", ";", "-", "*", "(", "[", "/")
+QUANTITATIVE_PATTERN = re.compile(r"(?:\$\d+|\b\d+(?:[.,]\d+)?(?:\s*%|\s*x|\b))", re.IGNORECASE)
+HANGUL_CJK_PATTERN = re.compile(r"[\uac00-\ud7a3\u4e00-\u9fff]")
+LATIN_ALPHA_PATTERN = re.compile(r"[a-zA-Z]")
 
 # ── 3. SQLite 상태 큐 ─────────────────────────────────────────────────────────
 def init_db() -> sqlite3.Connection:
@@ -207,33 +228,243 @@ def clean_transcript(file_path: Path, video_id: str) -> str:
         full_cleaned = full_cleaned[:SAFE_CHAR_LIMIT]
     return full_cleaned
 
-def validate_markdown_output(content: str, finish_reason: str | None = None, min_length: int = 150) -> None:
+def parse_anchor_seconds(ts_str: str) -> float:
+    """Converts MM:SS or HH:MM:SS string inside brackets to total seconds."""
+    parts = [int(p) for p in ts_str.strip().split(":")]
+    if len(parts) == 2:
+        return float(parts[0] * 60 + parts[1])
+    if len(parts) == 3:
+        return float(parts[0] * 3600 + parts[1] * 60 + parts[2])
+    return 0.0
+
+
+def validate_markdown_output(
+    content: str,
+    cleaned_text: str = "",
+    finish_reason: str | None = None,
+    min_length: int = 150,
+) -> dict:
     """
-    생성된 마크다운 리포트의 최소 길이, 필수 5단 섹션 헤더, 타임스탬프 인용 여부 및 문장 완결성을 검증합니다.
+    Stage 1 Deterministic Quality Gate:
+    Audits truncation, English language compliance, 5-section order & per-section density,
+    2-level hierarchical bullet structure, quantitative metrics in Section 3,
+    exact timestamp grounding against cleaned_text anchors, and 3-tercile temporal coverage.
+    Returns a dictionary of audit telemetry metrics if all checks pass, or raises ValueError.
     """
     if finish_reason == "length":
-        raise ValueError("출력 토큰 상한 도달로 인해 리포트가 중간에 절단되었습니다 (finish_reason=length).")
+        raise ValueError("Output truncated due to max_tokens limit (finish_reason=length).")
 
     text = (content or "").strip()
     if len(text) < min_length:
-        raise ValueError(f"생성된 노트가 목표 밀도보다 짧습니다 ({len(text)}자 < {min_length}자).")
-
-    missing_headers = [h for h in REQUIRED_HEADERS if h not in text]
-    if missing_headers:
-        raise ValueError(f"필수 섹션 헤더가 누락되었습니다: {missing_headers}")
-
-    if not CITATION_PATTERN.search(text):
-        raise ValueError("본문 내 타임스탬프 인용([MM:SS])이 최소 1회 이상 포함되어야 합니다.")
-
-    # 마지막 5번 섹션 이후 최소 분량 및 문장 절단 여부 검증
-    sec5_idx = text.rfind("### 5.")
-    sec5_body = text[sec5_idx:].splitlines()[1:]
-    non_empty_sec5 = [line.strip() for line in sec5_body if line.strip()]
-    if len(non_empty_sec5) < 2:
-        raise ValueError("5번 섹션(현업 적용/실천 가이드) 본문이 부족하거나 누락되었습니다.")
+        raise ValueError(f"Report length ({len(text)} chars) is below target density ({min_length} chars).")
 
     if text.endswith(TRUNCATED_END_CHARS):
-        raise ValueError(f"리포트 마지막 문장이 비정상적으로 절단되었습니다 (끝 문자: '{text[-1]}').")
+        raise ValueError(f"Report ends with an incomplete mid-sentence character ('{text[-1]}').")
+
+    # 1. English Language Compliance Gate
+    latin_count = len(LATIN_ALPHA_PATTERN.findall(text))
+    cjk_count = len(HANGUL_CJK_PATTERN.findall(text))
+    if latin_count == 0 or (cjk_count / max(1, latin_count + cjk_count)) > 0.01:
+        raise ValueError(
+            f"Language compliance failed: output contains non-English CJK/Hangul characters ({cjk_count} chars)."
+        )
+
+    # 2. Required 5 Headers & Sequential Order Gate
+    header_positions = []
+    for h in REQUIRED_HEADERS:
+        idx = text.find(h)
+        if idx == -1:
+            raise ValueError(f"Missing required section header: {h}")
+        header_positions.append(idx)
+
+    if header_positions != sorted(header_positions):
+        raise ValueError("Section headers (### 1. through ### 5.) are out of sequential order.")
+
+    # 3. Per-Section Density, Hierarchy & Citation Gate
+    is_longform = len(cleaned_text) >= 50_000
+    min_sec_chars = 600 if is_longform else 80
+    min_sec_lines = 4 if is_longform else 2
+    nested_bullet_re = re.compile(r"^\s{2,}(?:[-*]|\d+\.)\s+", re.MULTILINE)
+
+    section_Lengths = {}
+    for i, start_idx in enumerate(header_positions):
+        end_idx = header_positions[i + 1] if i + 1 < len(header_positions) else len(text)
+        sec_text = text[start_idx:end_idx].strip()
+        sec_lines = [line.strip() for line in sec_text.splitlines()[1:] if line.strip()]
+        sec_cites = CITATION_PATTERN.findall(sec_text)
+        section_Lengths[REQUIRED_HEADERS[i]] = len(sec_text)
+
+        if len(sec_text) < min_sec_chars:
+            raise ValueError(
+                f"Section '{REQUIRED_HEADERS[i]}' is too thin ({len(sec_text)} chars < {min_sec_chars} chars)."
+            )
+        if len(sec_lines) < min_sec_lines:
+            raise ValueError(
+                f"Section '{REQUIRED_HEADERS[i]}' has too few lines ({len(sec_lines)} < {min_sec_lines})."
+            )
+        if is_longform and not nested_bullet_re.search(sec_text):
+            raise ValueError(
+                f"Section '{REQUIRED_HEADERS[i]}' lacks required 2-level indented sub-bullets."
+            )
+        if is_longform and len(sec_cites) < 2:
+            raise ValueError(
+                f"Section '{REQUIRED_HEADERS[i]}' has insufficient timestamp citations ({len(sec_cites)} < 2)."
+            )
+
+        # Section 3 specific: Quantitative Empirical Data Gate
+        if i == 2 and is_longform:
+            quant_matches = QUANTITATIVE_PATTERN.findall(sec_text)
+            if len(quant_matches) < 5:
+                raise ValueError(
+                    f"Section 3 (Key Findings) lacks sufficient quantitative metrics ({len(quant_matches)} < 5)."
+                )
+
+    # 4. Timestamp Grounding & Temporal Coverage Gate
+    cited_raw = CITATION_PATTERN.findall(text)
+    if not cited_raw:
+        raise ValueError("Report must contain at least 1 timestamp citation ([MM:SS]).")
+
+    min_total_cites = 25 if is_longform else 1
+    min_unique_cites = 15 if is_longform else 1
+    unique_cited = sorted(set(cited_raw))
+
+    if len(cited_raw) < min_total_cites or len(unique_cited) < min_unique_cites:
+        raise ValueError(
+            f"Insufficient timestamp citations: total={len(cited_raw)} (min {min_total_cites}), "
+            f"unique={len(unique_cited)} (min {min_unique_cites})."
+        )
+
+    grounding_ratio = 1.0
+    tercile_counts = {"early": 0, "middle": 0, "late": 0}
+
+    if cleaned_text:
+        source_anchors_raw = set(CITATION_PATTERN.findall(cleaned_text))
+        source_secs = sorted(parse_anchor_seconds(a) for a in source_anchors_raw)
+        if source_secs:
+            max_sec = source_secs[-1]
+            grounded_count = 0
+            for c_str in unique_cited:
+                c_sec = parse_anchor_seconds(c_str)
+                # Exact anchor match or within +/- 60s of a valid source anchor
+                if c_str in source_anchors_raw or any(abs(c_sec - s) <= 60.0 for s in source_secs):
+                    grounded_count += 1
+                if max_sec > 0:
+                    if c_sec <= max_sec / 3.0:
+                        tercile_counts["early"] += 1
+                    elif c_sec <= (2.0 * max_sec) / 3.0:
+                        tercile_counts["middle"] += 1
+                    elif c_sec <= max_sec + 120.0:
+                        tercile_counts["late"] += 1
+
+            grounding_ratio = grounded_count / max(1, len(unique_cited))
+            if grounding_ratio < 0.85:
+                raise ValueError(
+                    f"Timestamp hallucination detected: only {grounding_ratio:.1%} ({grounded_count}/{len(unique_cited)}) "
+                    f"of cited timestamps match the source transcript anchors."
+                )
+
+            # Require coverage across Early, Middle, and Late terciles for videos >= 15 mins
+            if is_longform and max_sec >= 900.0:
+                missing_terciles = [k for k, v in tercile_counts.items() if v < 2]
+                if missing_terciles:
+                    raise ValueError(
+                        f"Incomplete temporal coverage across video timeline (tercile counts={tercile_counts}); "
+                        f"insufficient citations in: {missing_terciles}."
+                    )
+
+    return {
+        "char_len": len(text),
+        "total_citations": len(cited_raw),
+        "unique_citations": len(unique_cited),
+        "grounding_ratio": round(grounding_ratio, 4),
+        "tercile_counts": tercile_counts,
+        "section_lengths": section_Lengths,
+    }
+
+
+def build_judge_ground_truth_sample(cleaned_text: str, max_blocks: int = 18) -> str:
+    """Extracts evenly spaced timestamped blocks across the entire transcript for fast LLM Judge verification."""
+    blocks = [b.strip() for b in re.split(r"(?=\[\d{1,3}:\d{2}\])", cleaned_text) if b.strip()]
+    if not blocks:
+        return cleaned_text[:15000]
+    if len(blocks) <= max_blocks:
+        return "\n".join(b[:700] for b in blocks)
+    step = max(1, len(blocks) // max_blocks)
+    sampled = [blocks[i][:700] for i in range(0, len(blocks), step)][:max_blocks]
+    if blocks[-1][:700] not in sampled:
+        sampled.append(blocks[-1][:700])
+    return "\n".join(sampled)
+
+
+def extract_verdict_json(raw_text: str) -> dict | None:
+    """Extracts the last valid Judge JSON object containing 'pass' and 'score' from text or reasoning output."""
+    if not raw_text:
+        return None
+    candidates = re.findall(
+        r"\{[^{}]*\"pass\"\s*:\s*(?:true|false)[^{}]*(?:\{[^{}]*\}[^{}]*)*\}",
+        raw_text,
+        re.DOTALL | re.IGNORECASE,
+    )
+    for cand in reversed(candidates):
+        try:
+            parsed = json.loads(cand)
+            if "pass" in parsed and "score" in parsed:
+                return parsed
+        except Exception:
+            continue
+    return None
+
+
+def audit_with_llm_judge(client: OpenAI, slot_model: str, cleaned_text: str, report_md: str) -> dict:
+    """
+    Stage 2 Semantic & Fidelity LLM Judge:
+    Verifies factual grounding against sampled transcript blocks, methodology depth,
+    section role alignment, and English completeness.
+    Supports reasoning models that emit JSON in either message.content or message.reasoning.
+    """
+    sampled_source = build_judge_ground_truth_sample(cleaned_text, max_blocks=10)
+    user_payload = (
+        "Be concise in your evaluation and output ONLY the final JSON object.\n\n"
+        "=== SOURCE TRANSCRIPT ANCHOR EXCERPTS (EARLY / MIDDLE / LATE) ===\n"
+        f"{sampled_source}\n\n"
+        "=== GENERATED MARKDOWN REPORT TO AUDIT ===\n"
+        f"{report_md}"
+    )
+
+    verdict = None
+    last_raw = ""
+    for _judge_attempt in range(2):
+        resp = client.chat.completions.create(
+            model=slot_model,
+            messages=[
+                {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_payload},
+            ],
+            temperature=0.0,
+            max_tokens=16384,
+            extra_body={"reasoning": {"effort": "low"}},
+            timeout=180.0,
+        )
+        msg = resp.choices[0].message
+        content_text = (msg.content or "").strip()
+        reasoning_text = (getattr(msg, "reasoning", None) or "").strip()
+        last_raw = content_text or reasoning_text
+
+        verdict = extract_verdict_json(content_text) or extract_verdict_json(reasoning_text)
+        if verdict is not None:
+            break
+
+    if verdict is None:
+        raise ValueError(f"LLM Judge returned non-JSON response: {last_raw[:200]}")
+
+    score = int(verdict.get("score", 0))
+    passed = bool(verdict.get("pass", False)) and score >= 80
+    defects = verdict.get("defects", [])
+
+    if not passed:
+        raise ValueError(f"Stage 2 LLM Judge rejected report (score={score}/100): {defects}")
+
+    return verdict
 
 def resolve_output_path(f_name: str, f_hash: str) -> Path:
     """
@@ -252,52 +483,89 @@ def resolve_output_path(f_name: str, f_hash: str) -> Path:
         return OUTPUT_DIR / f"{f_name}_{f_hash[:8]}.md"
     return candidate
 
-# ── 5. 단일 작업 처리기 ─────────────────────────────────────────────────────────
+# ── 5. 단일 작업 처리기 (Hybrid 2-Stage Audit + Self-Correction Loop) ─────────
 def process_single_job(client: OpenAI, slot_model: str, job: tuple) -> bool:
     f_hash, f_name, cleaned_text, retries = job
     out_file = resolve_output_path(f_name, f_hash)
+    target_min_len = 7000 if len(cleaned_text) >= 50_000 else 150
 
-    try:
-        # jpro-router에 단일 요청 전송 (프록시가 10+개 키 로테이션 및 폴백 자동 집행)
-        resp = client.chat.completions.create(
-            model=slot_model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": cleaned_text}
-            ],
-            temperature=0.15,
-            max_tokens=MAX_OUTPUT_TOKENS,
-            timeout=300.0
-        )
+    last_audit_error = ""
+    current_retries = retries
 
-        choice = resp.choices[0]
-        content = choice.message.content
-        target_min_len = 5000 if len(cleaned_text) >= 50000 else 150
-        validate_markdown_output(content, finish_reason=choice.finish_reason, min_length=target_min_len)
-
-        out_file.write_text(content, encoding="utf-8")
-
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute(
-                "UPDATE jobs SET status = 'DONE', updated_at = ? WHERE file_hash = ?",
-                (time.time(), f_hash)
+    while current_retries < MAX_RETRIES:
+        user_content = cleaned_text
+        if last_audit_error:
+            user_content = (
+                f"[CRITICAL CORRECTION REQUIRED FROM PREVIOUS ATTEMPT]\n"
+                f"Your previous output was rejected by the quality gate for the following reason:\n"
+                f"-> {last_audit_error}\n"
+                f"Fix this defect completely while obeying all mandatory rules.\n\n"
+                f"=== TRANSCRIPT ===\n{cleaned_text}"
             )
-        print(f"[성공] {f_name} -> {out_file.name}")
-        return True
 
-    except Exception as e:
-        new_retries = retries + 1
-        new_status = "FAILED" if new_retries >= MAX_RETRIES else "PENDING"
-        print(f"[실패] {f_name} (시도 {new_retries}/{MAX_RETRIES}, 상태={new_status}): {e}")
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute(
-                "UPDATE jobs SET retries = ?, status = ?, updated_at = ? WHERE file_hash = ?",
-                (new_retries, new_status, time.time(), f_hash)
+        try:
+            # 1) Generation LLM Call
+            resp = client.chat.completions.create(
+                model=slot_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_content}
+                ],
+                temperature=0.15,
+                max_tokens=MAX_OUTPUT_TOKENS,
+                timeout=300.0
             )
-        return False
-    finally:
-        # 워커 스레드 내에서 1.0초 안전 지터 유지 (Least-In-Flight 재정렬 보장)
-        time.sleep(1.0)
+
+            choice = resp.choices[0]
+            content = choice.message.content
+
+            # 2) Stage 1: Deterministic Python Structural, Mathematical & Grounding Audit
+            stage1_stats = validate_markdown_output(
+                content,
+                cleaned_text=cleaned_text,
+                finish_reason=choice.finish_reason,
+                min_length=target_min_len,
+            )
+            print(
+                f"  ✅ [Stage 1 Deterministic Gate PASS] len={stage1_stats['char_len']:,} chars, "
+                f"cites={stage1_stats['total_citations']} (unique={stage1_stats['unique_citations']}, "
+                f"grounded={stage1_stats['grounding_ratio']:.1%}), terciles={stage1_stats['tercile_counts']}"
+            )
+
+            # 3) Stage 2: LLM Semantic & Fidelity Judge Audit
+            verdict = audit_with_llm_judge(client, slot_model, cleaned_text, content)
+            print(
+                f"  ✅ [Stage 2 LLM Semantic Judge PASS] score={verdict.get('score')}/100, "
+                f"breakdown={verdict.get('scores')}"
+            )
+
+            out_file.write_text(content, encoding="utf-8")
+
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute(
+                    "UPDATE jobs SET retries = ?, status = 'DONE', updated_at = ? WHERE file_hash = ?",
+                    (current_retries, time.time(), f_hash)
+                )
+            print(f"[성공] {f_name} -> {out_file.name}")
+            return True
+
+        except Exception as e:
+            last_audit_error = str(e)
+            current_retries += 1
+            new_status = "FAILED" if current_retries >= MAX_RETRIES else "PENDING"
+            print(f"[실패/자율교정] {f_name} (시도 {current_retries}/{MAX_RETRIES}, 상태={new_status}): {e}")
+            with sqlite3.connect(DB_PATH) as conn:
+                conn.execute(
+                    "UPDATE jobs SET retries = ?, status = ?, updated_at = ? WHERE file_hash = ?",
+                    (current_retries, new_status, time.time(), f_hash)
+                )
+            if current_retries < MAX_RETRIES:
+                time.sleep(1.5)
+        finally:
+            # 워커 스레드 내에서 1.0초 안전 지터 유지 (Least-In-Flight 재정렬 보장)
+            time.sleep(1.0)
+
+    return False
 
 # ── 6. 메인 배치 파이프라인 ───────────────────────────────────────────────────
 def run_pipeline(concurrency: int = 2):
