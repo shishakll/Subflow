@@ -1,0 +1,5 @@
+# Unified Multi-Domain Lakehouse Schema and Local Proxy Socket Routing
+
+Status: accepted
+
+Subflow OmniLake stores all domains (`medical`, `seo`, `fermentation`) in a single unified LanceDB table (`knowledge_chunks.lance`) paired with DuckDB out-of-core SQL filtering (`domain`, `sub_domain`, `authority_score`, and JSON `domain_meta`) and KuzuDB/Parquet causal triples, rather than creating isolated database instances per domain. This enables cross-domain reasoning (e.g., connecting fermentation metabolites to skin longevity pathways) on an 8 GB Apple Silicon machine with near-zero memory overhead. All model inference routes exclusively through `jpro-router` (`http://127.0.0.1:4001/openai/v1`) using four dedicated virtual sockets: `gpt-embedding` (`/openai/v1/embeddings` with `dimensions=1024` Matryoshka projection), `gpt-rerank` (`/openai/v1/rerank`), `gpt-6.1-sol` (`/openai/v1/chat/completions` for 1M-context structuring), and `gpt-6-luna` (`/openai/v1/chat/completions` for millisecond Lightning synthesis).
