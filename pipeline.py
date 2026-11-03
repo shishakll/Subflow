@@ -127,6 +127,21 @@ def init_db() -> sqlite3.Connection:
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);")
+
+    # OmniLake 멀티 도메인 및 인덱싱 상태 컬럼 확장 (하위 호환성 보장)
+    for col, col_type in (
+        ("domain", "TEXT DEFAULT 'medical'"),
+        ("sub_domain", "TEXT DEFAULT 'general'"),
+        ("channel_name", "TEXT DEFAULT ''"),
+        ("video_title", "TEXT DEFAULT ''"),
+        ("index_status", "TEXT DEFAULT 'PENDING'"),
+        ("chunks_indexed", "INTEGER DEFAULT 0"),
+    ):
+        try:
+            conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {col_type}")
+        except sqlite3.OperationalError:
+            pass  # 이미 컬럼이 존재하는 경우 무시
+
     conn.commit()
     return conn
 
@@ -568,10 +583,17 @@ def process_single_job(client: OpenAI, slot_model: str, job: tuple) -> bool:
     return False
 
 # ── 6. 메인 배치 파이프라인 ───────────────────────────────────────────────────
-def run_pipeline(concurrency: int = 2):
+def run_pipeline(
+    concurrency: int = 2,
+    domain: str = "medical",
+    sub_domain: str = "general",
+    channel: str = "",
+    index_after: bool = False,
+):
     """
     jpro-router가 10개 이상의 계정을 관리하므로,
     Subflow는 굳이 35초씩 기다리지 않고 2개 스레드 동시 처리 및 최소 대기로 100개를 고속 완주합니다.
+    구조화 완료 후 index_after=True인 경우 OmniLake LanceDB 인덱서(indexer.py)를 자동 기동합니다.
     """
     client, slot_model = resolve_router_client()
     conn = init_db()
@@ -592,8 +614,11 @@ def run_pipeline(concurrency: int = 2):
 
         cleaned = clean_transcript(file_path, video_id)
         conn.execute(
-            "INSERT INTO jobs (file_hash, file_name, video_id, cleaned_text, updated_at) VALUES (?, ?, ?, ?, ?)",
-            (f_hash, file_path.stem, video_id, cleaned, time.time())
+            """INSERT INTO jobs (
+                file_hash, file_name, video_id, cleaned_text, updated_at,
+                domain, sub_domain, channel_name, video_title, index_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')""",
+            (f_hash, file_path.stem, video_id, cleaned, time.time(), domain, sub_domain, channel, file_path.stem)
         )
     conn.commit()
 
@@ -605,15 +630,65 @@ def run_pipeline(concurrency: int = 2):
 
     if not jobs:
         print("[완료] 처리할 대기 스크립트가 없습니다.")
-        return
+    else:
+        print(f"[시작] 총 {len(jobs)}개 스크립트 구조화 시작 (동시성: {concurrency}, 슬롯: {slot_model})")
 
-    print(f"[시작] 총 {len(jobs)}개 스크립트 구조화 시작 (동시성: {concurrency}, 슬롯: {slot_model})")
+        # 3. 고속 배치 실행
+        with ThreadPoolExecutor(max_workers=concurrency) as executor:
+            futures = {executor.submit(process_single_job, client, slot_model, job): job for job in jobs}
+            for future in as_completed(futures):
+                _ = future.result()
 
-    # 3. 고속 배치 실행
-    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-        futures = {executor.submit(process_single_job, client, slot_model, job): job for job in jobs}
-        for future in as_completed(futures):
-            _ = future.result()
+    # 4. OmniLake 인덱싱 (index_after 옵션 활성화 시)
+    if index_after:
+        print("\n[OmniLake] 구조화 완료 문서 및 자막의 레이크하우스(LanceDB) 인덱싱 기동...")
+        try:
+            from indexer import OmniLakeIndexer
+            lake_indexer = OmniLakeIndexer()
+
+            pending_indices = conn.execute("""
+                SELECT file_hash, file_name, video_id, domain, sub_domain, channel_name, video_title
+                FROM jobs WHERE status = 'DONE' AND index_status != 'INDEXED'
+            """).fetchall()
+
+            for item in pending_indices:
+                f_hash, f_name, vid, dom, sub_dom, chan, v_title = item
+                out_file = resolve_output_path(f_name, f_hash)
+                vtt_candidates = list(INPUT_DIR.glob(f"*{vid}*.vtt"))
+                vtt_file = vtt_candidates[0] if vtt_candidates else None
+
+                stats = lake_indexer.index_video(
+                    video_id=vid,
+                    title=v_title or f_name,
+                    channel=chan or "Unknown Channel",
+                    domain=dom or domain,
+                    sub_domain=sub_dom or sub_domain,
+                    vtt_path=vtt_file,
+                    md_path=out_file if out_file.exists() else None,
+                    mode="deep"
+                )
+                conn.execute(
+                    "UPDATE jobs SET index_status = 'INDEXED', chunks_indexed = ?, updated_at = ? WHERE file_hash = ?",
+                    (stats.get("total_chunks", 0), time.time(), f_hash)
+                )
+                conn.commit()
+        except Exception as e:
+            print(f"[OmniLake 인덱싱 오류]: {e}")
 
 if __name__ == "__main__":
-    run_pipeline(concurrency=2)
+    import argparse
+    parser = argparse.ArgumentParser(description="Subflow Structuring Pipeline & OmniLake Indexer")
+    parser.add_argument("--concurrency", "-c", type=int, default=2, help="동시 LLM 워커 수 (기본값: 2)")
+    parser.add_argument("--domain", "-d", type=str, default="medical", choices=["medical", "seo", "fermentation"], help="대상 지식 도메인")
+    parser.add_argument("--sub-domain", "-s", type=str, default="general", help="세부 도메인 (예: mitochondria, brain_health)")
+    parser.add_argument("--channel", type=str, default="", help="유튜브 채널명")
+    parser.add_argument("--index", action="store_true", help="구조화 완료 후 OmniLake LanceDB 인덱싱까지 자동 실행")
+
+    cli_args = parser.parse_args()
+    run_pipeline(
+        concurrency=cli_args.concurrency,
+        domain=cli_args.domain,
+        sub_domain=cli_args.sub_domain,
+        channel=cli_args.channel,
+        index_after=cli_args.index,
+    )

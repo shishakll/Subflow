@@ -21,10 +21,12 @@ Deliver the complete Technical Specification ([`spec.md`](./spec.md)), Domain Gl
 - [Verify and wire jpro-router OpenAI Embedding and Rerank sockets](./issues/01-jpro-router-embedding-and-rerank-sockets.md): Added `/openai/v1/embeddings` (`gpt-embedding`, 1024-d MRL) and `/openai/v1/rerank` (`gpt-rerank`) passthrough routes with key rotation and model fallback to `jpro-router`, and verified live with `gpt-6-luna` (`nvidia/nemotron-3.5-lightning:free`).
 - [Lock Multi-Domain Lakehouse Schema and Domain Cartridges](./issues/02-multidomain-lakehouse-schema-and-cartridges.md): Adopted a single unified `knowledge_chunks.lance` Arrow schema (`domain`, `sub_domain`, `chunk_tier`, `entities`, `authority_score`, `domain_meta` JSON) plus `graph_edges.parquet`/KuzuDB causal triples, and recorded canonical terms in `GLOSSARY.md` and `ADR-0001`.
 - [Lock Dual-Track Chunking and Triple-Shield Sponsor Defense](./issues/03-dual-track-chunking-and-triple-shield-auditor.md): Combined SponsorBlock intervals, VTT rolling-caption suffix-prefix deduplication, and bilingual `SPONSOR_REGEX` slicing across Track B (`verbatim_window`) and Track A (`distilled_claim` + `Causal Triple` extraction from `structured_notes/*.md`).
+- [Implement Domain Cartridge Registry and OmniLake Indexer](./issues/04-implement-domains-and-omnilake-indexer.md): Created `domains.py` and `indexer.py` with multi-domain cartridges, Triple-Shield noise defense, Dual-Track chunking, 1024-d Matryoshka L2 embeddings via `jpro-router` (`gpt-embedding`), and LanceDB + DuckDB Parquet upsert.
+- [Implement Hybrid Retriever and End-to-End CLI Integration](./issues/05-implement-hybrid-retriever-and-cli-integration.md): Created `retriever.py` with dense + BM25 RRF + 1-hop causal expansion + `gpt-rerank` + `gpt-6-luna` Lightning synthesis with timestamp evidence cards, and extended `collector.py` and `pipeline.py` with `--domain`, `--sub-domain`, `--channel`, and `--index` CLI flags.
 
 ## Not yet specified
 
-- None — all architectural decisions for [`spec.md`](./spec.md) are resolved and ready for implementation tickets ([`04-implement-domains-and-omnilake-indexer.md`](./issues/04-implement-domains-and-omnilake-indexer.md) and [`05-implement-hybrid-retriever-and-cli-integration.md`](./issues/05-implement-hybrid-retriever-and-cli-integration.md)).
+- None — All 5 Wayfinder milestones are fully resolved, implemented, and verified live!
 
 ## Out of scope
 
